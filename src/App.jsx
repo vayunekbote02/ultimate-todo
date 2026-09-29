@@ -22,7 +22,6 @@ export default function App() {
 
   const [tasks, setTasks] = useState([]);
   const [completions, setCompletions] = useState({});
-  const [subtaskCompletions, setSubtaskCompletions] = useState({});
 
   const [activeTab, setActiveTab] = useState("home");
   const [selectedDate, setSelectedDate] = useState(() => new Date());
@@ -30,30 +29,6 @@ export default function App() {
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isNameModalOpen, setIsNameModalOpen] = useState(false);
-
-  // Easter Egg State: 5 quick taps on the name triggers Party Mode
-  const [easterEggActive, setEasterEggActive] = useState(false);
-  const [nameTapCount, setNameTapCount] = useState(0);
-
-  // Switch tab and automatically reset date to today when opening schedule
-  const handleTabChange = (tab) => {
-    if (tab === "schedule") {
-      setSelectedDate(new Date());
-    }
-    setActiveTab(tab);
-  };
-
-  const handleNameClick = () => {
-    const nextCount = nameTapCount + 1;
-    if (nextCount >= 5) {
-      setEasterEggActive(true);
-      setNameTapCount(0);
-      setTimeout(() => setEasterEggActive(false), 3500);
-    } else {
-      setNameTapCount(nextCount);
-      setIsNameModalOpen(true);
-    }
-  };
 
   // Authentication State Listener
   useEffect(() => {
@@ -75,23 +50,26 @@ export default function App() {
     if (!session?.user) return;
 
     async function loadData() {
+      // 1. Fetch all tasks (roots and subtasks together)
       const { data: tasksData, error: taskErr } = await supabase
         .from("tasks")
-        .select("id, title, notes, repeat_type, days, target_date, subtasks(id, title)");
+        .select("id, parent_id, title, notes, repeat_type, days, target_date");
 
       if (!taskErr && tasksData) {
         setTasks(
           tasksData.map((t) => ({
             id: t.id,
+            parentId: t.parent_id,
             title: t.title,
             notes: t.notes || "",
             repeatType: t.repeat_type,
             days: t.days || [],
-            subtasks: t.subtasks || [],
+            targetDate: t.target_date || null,
           }))
         );
       }
 
+      // 2. Fetch completions
       const { data: compData } = await supabase
         .from("task_completions")
         .select("task_id, completed_date");
@@ -103,19 +81,6 @@ export default function App() {
           compMap[row.completed_date].push(row.task_id);
         });
         setCompletions(compMap);
-      }
-
-      const { data: subCompData } = await supabase
-        .from("subtask_completions")
-        .select("subtask_id, completed_date");
-
-      if (subCompData) {
-        const subCompMap = {};
-        subCompData.forEach((row) => {
-          if (!subCompMap[row.completed_date]) subCompMap[row.completed_date] = [];
-          subCompMap[row.completed_date].push(row.subtask_id);
-        });
-        setSubtaskCompletions(subCompMap);
       }
     }
 
@@ -130,7 +95,15 @@ export default function App() {
     return tasks.find((t) => t.id === dedicatedTaskId) || null;
   }, [tasks, dedicatedTaskId]);
 
-  const displayName = session?.user?.user_metadata?.display_name || "";
+  // Top-level root tasks for the main lists
+  const rootTasks = useMemo(() => {
+    return tasks.filter((t) => !t.parentId);
+  }, [tasks]);
+
+  const displayName =
+    session?.user?.user_metadata?.display_name ||
+    session?.user?.user_metadata?.full_name ||
+    "";
 
   const handleUpdateName = async (newName) => {
     const { data, error } = await supabase.auth.updateUser({
@@ -145,6 +118,7 @@ export default function App() {
     const list = completions[targetDateKey] || [];
     const isCompleted = list.includes(taskId);
 
+    // Update only this specific task
     setCompletions((prev) => ({
       ...prev,
       [targetDateKey]: isCompleted ? list.filter((id) => id !== taskId) : [...list, taskId],
@@ -164,92 +138,58 @@ export default function App() {
     }
   };
 
-  const toggleSubtaskForDate = async (taskId, subtaskId, targetDateKey) => {
-    const parent = tasks.find((t) => t.id === taskId);
-    if (!parent) return;
+  const handleAddSubtask = async (title, parentId) => {
+    const parent = tasks.find((t) => t.id === parentId);
+    const payload = {
+      user_id: session.user.id,
+      parent_id: parentId,
+      title: title,
+      notes: "",
+      repeat_type: parent ? parent.repeatType : "daily",
+      days: parent ? parent.days : [],
+      target_date: parent ? parent.targetDate : null,
+    };
 
-    const currentSubCompletions = subtaskCompletions[targetDateKey] || [];
-    const isCompleted = currentSubCompletions.includes(subtaskId);
-
-    const updatedSub = isCompleted
-      ? currentSubCompletions.filter((id) => id !== subtaskId)
-      : [...currentSubCompletions, subtaskId];
-
-    setSubtaskCompletions((prev) => ({
-      ...prev,
-      [targetDateKey]: updatedSub,
-    }));
-
-    if (isCompleted) {
-      await supabase
-        .from("subtask_completions")
-        .delete()
-        .match({ subtask_id: subtaskId, completed_date: targetDateKey, user_id: session.user.id });
-    } else {
-      await supabase.from("subtask_completions").insert({
-        subtask_id: subtaskId,
-        completed_date: targetDateKey,
-        user_id: session.user.id,
-      });
-
-      if (parent.subtasks && parent.subtasks.length > 0) {
-        const allDone = parent.subtasks.every((sub) =>
-          sub.id === subtaskId ? true : updatedSub.includes(sub.id)
-        );
-        if (allDone) {
-          const mainList = completions[targetDateKey] || [];
-          if (!mainList.includes(taskId)) {
-            setCompletions((prev) => ({
-              ...prev,
-              [targetDateKey]: [...mainList, taskId],
-            }));
-            await supabase.from("task_completions").insert({
-              task_id: taskId,
-              completed_date: targetDateKey,
-              user_id: session.user.id,
-            });
-          }
-        }
-      }
-    }
-  };
-
-  const handleAddSubtask = async (title) => {
-    if (!dedicatedTaskId) return;
-
-    const { data, error } = await supabase
-      .from("subtasks")
-      .insert({
-        task_id: dedicatedTaskId,
-        user_id: session.user.id,
-        title: title,
-      })
-      .select()
-      .single();
+    const { data, error } = await supabase.from("tasks").insert(payload).select().single();
 
     if (!error && data) {
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === dedicatedTaskId
-            ? { ...t, subtasks: [...(t.subtasks || []), { id: data.id, title: data.title }] }
-            : t
-        )
-      );
+      setTasks((prev) => [
+        ...prev,
+        {
+          id: data.id,
+          parentId: data.parent_id,
+          title: data.title,
+          notes: data.notes || "",
+          repeatType: data.repeat_type,
+          days: data.days || [],
+          targetDate: data.target_date || null,
+        },
+      ]);
     }
   };
 
-  const handleDeleteSubtask = async (subtaskId) => {
-    if (!dedicatedTaskId) return;
+  const handleDeleteTask = async (taskId) => {
+    // Delete task and all descendants from local state
+    const idsToDelete = new Set([taskId]);
+    let added = true;
+    while (added) {
+      added = false;
+      tasks.forEach((t) => {
+        if (t.parentId && idsToDelete.has(t.parentId) && !idsToDelete.has(t.id)) {
+          idsToDelete.add(t.id);
+          added = true;
+        }
+      });
+    }
 
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === dedicatedTaskId
-          ? { ...t, subtasks: (t.subtasks || []).filter((s) => s.id !== subtaskId) }
-          : t
-      )
-    );
+    setTasks((prev) => prev.filter((t) => !idsToDelete.has(t.id)));
 
-    await supabase.from("subtasks").delete().match({ id: subtaskId, user_id: session.user.id });
+    // Parent deletion cascades to descendants in Postgres
+    await supabase.from("tasks").delete().match({ id: taskId, user_id: session.user.id });
+
+    if (dedicatedTaskId && idsToDelete.has(dedicatedTaskId)) {
+      setDedicatedTaskId(null);
+    }
   };
 
   const handleSaveNotes = async (newNotes) => {
@@ -268,6 +208,7 @@ export default function App() {
   const handleCreateTask = async (taskData) => {
     const payload = {
       user_id: session.user.id,
+      parent_id: null,
       title: taskData.title,
       notes: taskData.notes,
       repeat_type: taskData.repeatType,
@@ -282,12 +223,12 @@ export default function App() {
         ...prev,
         {
           id: data.id,
+          parentId: null,
           title: data.title,
           notes: data.notes || "",
           repeatType: data.repeat_type,
           days: data.days || [],
           targetDate: data.target_date || null,
-          subtasks: [],
         },
       ]);
     }
@@ -305,40 +246,32 @@ export default function App() {
   if (dedicatedTask) {
     const activeDateKey = activeTab === "home" ? todayKey : selectedDateKey;
     const isMainDone = (completions[activeDateKey] || []).includes(dedicatedTask.id);
-    const subtaskDoneList = subtaskCompletions[activeDateKey] || [];
 
     return e(DedicatedTaskPage, {
       task: dedicatedTask,
+      allTasks: tasks,
       activeDateKey: activeDateKey,
       isMainDone: isMainDone,
-      subtaskDoneList: subtaskDoneList,
-      onBack: () => setDedicatedTaskId(null),
-      onToggleMain: () => toggleTaskForDate(dedicatedTask.id, activeDateKey),
-      onToggleSubtask: (subId) => toggleSubtaskForDate(dedicatedTask.id, subId, activeDateKey),
+      completions: completions,
+      onBack: () => {
+        // Navigate to immediate parent if nested, otherwise return to dashboard/schedule
+        if (dedicatedTask.parentId) {
+          setDedicatedTaskId(dedicatedTask.parentId);
+        } else {
+          setDedicatedTaskId(null);
+        }
+      },
+      onNavigateToTask: (id) => setDedicatedTaskId(id),
+      onToggleTask: toggleTaskForDate,
       onAddSubtask: handleAddSubtask,
-      onDeleteSubtask: handleDeleteSubtask,
+      onDeleteSubtask: handleDeleteTask,
       onSaveNotes: handleSaveNotes,
     });
   }
 
   return e(
     "div",
-    { className: "min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center selection:bg-zinc-800 relative overflow-x-hidden" },
-
-    // Easter Egg Overlay
-    easterEggActive &&
-      e(
-        "div",
-        { className: "fixed inset-x-0 top-6 z-50 flex justify-center pointer-events-none animate-bounce" },
-        e(
-          "div",
-          { className: "px-4 py-2 rounded-full bg-gradient-to-r from-emerald-500 via-purple-500 to-pink-500 text-black font-extrabold text-xs shadow-xl flex items-center gap-2" },
-          e("span", null, "\uD83C\uDF89"),
-          e("span", null, "Overachiever Mode Unlocked! Keep crushing it!"),
-          e("span", null, "\u2728")
-        )
-      ),
-
+    { className: "min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center selection:bg-zinc-800" },
     e(
       "main",
       { className: "w-full max-w-md flex flex-col gap-5 p-4 pb-28 pt-3" },
@@ -351,8 +284,8 @@ export default function App() {
           e(
             "button",
             {
-              onClick: handleNameClick,
-              className: "text-[11px] uppercase tracking-wider font-semibold text-zinc-500 hover:text-zinc-300 flex items-center gap-1 transition select-none",
+              onClick: () => setIsNameModalOpen(true),
+              className: "text-[11px] uppercase tracking-wider font-semibold text-zinc-500 hover:text-zinc-300 flex items-center gap-1 transition",
             },
             displayName ? "Hi, " + displayName : "Set your name",
             e("span", { className: "text-[10px] opacity-70" }, "\u270E")
@@ -385,21 +318,22 @@ export default function App() {
 
       activeTab === "home" &&
         e(DashboardTab, {
-          tasks: tasks,
+          tasks: rootTasks,
           completions: completions,
-          subtaskCompletions: subtaskCompletions,
           today: today,
           todayKey: todayKey,
-          onOpenSchedule: () => handleTabChange("schedule"),
+          onOpenSchedule: () => {
+            setSelectedDate(new Date());
+            setActiveTab("schedule");
+          },
           onOpenTask: setDedicatedTaskId,
           onToggleTask: toggleTaskForDate,
         }),
 
       activeTab === "schedule" &&
         e(ScheduleTab, {
-          tasks: tasks,
+          tasks: rootTasks,
           completions: completions,
-          subtaskCompletions: subtaskCompletions,
           selectedDate: selectedDate,
           selectedDateKey: selectedDateKey,
           todayKey: todayKey,
@@ -423,7 +357,7 @@ export default function App() {
       e(
         "button",
         {
-          onClick: () => handleTabChange("home"),
+          onClick: () => setActiveTab("home"),
           className: "flex flex-col items-center gap-1 py-1 px-4 text-xs font-medium transition " +
             (activeTab === "home" ? "text-emerald-400 font-semibold" : "text-zinc-500 hover:text-zinc-300"),
         },
@@ -433,7 +367,10 @@ export default function App() {
       e(
         "button",
         {
-          onClick: () => handleTabChange("schedule"),
+          onClick: () => {
+            setSelectedDate(new Date());
+            setActiveTab("schedule");
+          },
           className: "flex flex-col items-center gap-1 py-1 px-4 text-xs font-medium transition " +
             (activeTab === "schedule" ? "text-emerald-400 font-semibold" : "text-zinc-500 hover:text-zinc-300"),
         },

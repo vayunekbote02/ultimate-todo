@@ -3,10 +3,11 @@ import CalendarPicker from "./CalendarPicker";
 
 const e = React.createElement;
 
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 export default function ScheduleTab({
   tasks,
   completions,
-  subtaskCompletions,
   selectedDate,
   selectedDateKey,
   todayKey,
@@ -36,9 +37,7 @@ export default function ScheduleTab({
 
   const selectedDayOfWeek = selectedDate.getDay();
   const visibleTasks = tasks.filter((t) => {
-    if (t.repeatType === "once") {
-      return t.targetDate === selectedDateKey;
-    }
+    if (t.repeatType === "once") return t.targetDate === selectedDateKey;
     if (t.repeatType === "daily") return true;
     return t.days && t.days.includes(selectedDayOfWeek);
   });
@@ -101,8 +100,6 @@ export default function ScheduleTab({
         ? e("div", { className: "text-center py-12 text-zinc-600 text-sm" }, "No tasks scheduled for this day.")
         : visibleTasks.map((task) => {
             const isCompleted = (completions[selectedDateKey] || []).includes(task.id);
-            const subDoneCount = (task.subtasks || []).filter((s) => (subtaskCompletions[selectedDateKey] || []).includes(s.id)).length;
-            const totalSub = (task.subtasks || []).length;
             const cardClass = isCompleted
               ? "bg-zinc-900/30 border-zinc-900 text-zinc-500"
               : "bg-zinc-900/90 border-zinc-800 hover:border-zinc-700 text-zinc-200";
@@ -117,11 +114,9 @@ export default function ScheduleTab({
                 "div",
                 {
                   onClick: () => onOpenTask(task.id),
-                  className: "flex flex-col flex-1 pr-3 cursor-pointer",
+                  className: "flex flex-col flex-1 pr-3 cursor-pointer overflow-hidden",
                 },
-                e("span", { className: "text-sm font-medium" + (isCompleted ? " line-through text-zinc-500" : "") }, task.title),
-                totalSub > 0 &&
-                  e("span", { className: "text-xs text-zinc-500 mt-0.5" }, subDoneCount + "/" + totalSub + " subtasks done")
+                e("span", { className: "text-sm font-medium" + (isCompleted ? " line-through text-zinc-500" : "") }, task.title)
               ),
               e(
                 "button",

@@ -2,10 +2,16 @@ import React, { useMemo } from "react";
 
 const e = React.createElement;
 
+function getPaddedDateKey(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const d = String(dateObj.getDate()).padStart(2, "0");
+  return `\({y}-\){m}-${d}`;
+}
+
 export default function DashboardTab({
   tasks,
   completions,
-  subtaskCompletions,
   today,
   todayKey,
   onOpenSchedule,
@@ -13,36 +19,68 @@ export default function DashboardTab({
   onToggleTask,
 }) {
   const totalCompletions = useMemo(() => {
-    return Object.values(completions).reduce((sum, arr) => sum + arr.length, 0);
+    return Object.values(completions).reduce((sum, arr) => sum + (arr ? arr.length : 0), 0);
   }, [completions]);
 
+  // Compute Current Streak
+  const currentStreak = useMemo(() => {
+    let streak = 0;
+    const todayList = completions[todayKey] || [];
+    let offset = todayList.length > 0 ? 0 : 1;
+
+    while (true) {
+      const d = new Date();
+      d.setDate(d.getDate() - offset);
+      const key = getPaddedDateKey(d);
+
+      if (completions[key] && completions[key].length > 0) {
+        streak++;
+        offset++;
+      } else {
+        break;
+      }
+    }
+    return streak;
+  }, [completions, todayKey]);
+
+  // Generate consecutive 70 days leading up to today
   const activityDays = useMemo(() => {
     const days = [];
     for (let i = 69; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      const dateKey = year + "-" + month + "-" + day;
-      const count = completions[dateKey] ? completions[dateKey].length : 0;
+      let dateKey;
+      if (i === 0) {
+        dateKey = todayKey; // Ensure today's square always matches todayKey identically
+      } else {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        dateKey = getPaddedDateKey(d);
+      }
+
+      const count = completions[dateKey] && Array.isArray(completions[dateKey])
+        ? completions[dateKey].length
+        : 0;
+
       days.push({ date: dateKey, count });
     }
     return days;
-  }, [completions]);
+  }, [completions, todayKey]);
 
-  const getCellColor = (count) => {
-    if (count === 0) return "bg-zinc-800/40 border-zinc-800/80";
-    if (count === 1) return "bg-emerald-950/60 border-emerald-800/50";
-    if (count === 2) return "bg-emerald-700/60 border-emerald-600/50";
-    if (count >= 3) return "bg-emerald-400 border-emerald-300";
-    return "bg-zinc-800/40 border-zinc-800/80";
+  // Vivid GitHub-style colors using direct styles to bypass any Tailwind purge issues
+  const getCellStyles = (count) => {
+    if (count === 0) {
+      return { backgroundColor: "#27272a", borderColor: "#3f3f46" }; // zinc-800
+    }
+    if (count === 1) {
+      return { backgroundColor: "#065f46", borderColor: "#047857" }; // emerald-800 (rich, clearly visible green)
+    }
+    if (count === 2) {
+      return { backgroundColor: "#059669", borderColor: "#10b981" }; // emerald-600 (vivid green)
+    }
+    return { backgroundColor: "#34d399", borderColor: "#6ee7b7" }; // emerald-400 (bright highlight)
   };
 
   const todayTasks = tasks.filter((t) => {
-    if (t.repeatType === "once") {
-      return t.targetDate === todayKey;
-    }
+    if (t.repeatType === "once") return t.targetDate === todayKey;
     if (t.repeatType === "daily") return true;
     return t.days && t.days.includes(today.getDay());
   });
@@ -74,7 +112,12 @@ export default function DashboardTab({
         "div",
         { className: "flex items-center justify-between" },
         e("span", { className: "text-xs font-semibold text-zinc-400 uppercase tracking-wider" }, "Activity (Last 10 Weeks)"),
-        e("span", { className: "text-[11px] font-mono text-zinc-500" }, (completions[todayKey] || []).length + " today")
+        e(
+          "span",
+          { className: "text-[11px] font-mono text-emerald-400 font-medium flex items-center gap-1" },
+          e("span", null, "\uD83D\uDD25"),
+          `${currentStreak} day streak`
+        )
       ),
       e(
         "div",
@@ -85,8 +128,9 @@ export default function DashboardTab({
           activityDays.map((day) =>
             e("div", {
               key: day.date,
-              title: day.date + ": " + day.count + " completed",
-              className: "w-full aspect-square rounded-[3px] border transition-colors " + getCellColor(day.count),
+              title: `\({day.date}:\){day.count} completed`,
+              style: getCellStyles(day.count),
+              className: "w-full aspect-square rounded-[3px] border transition-colors",
             })
           )
         )
@@ -95,10 +139,10 @@ export default function DashboardTab({
         "div",
         { className: "flex items-center justify-end gap-1.5 text-[10px] text-zinc-500 pt-1" },
         e("span", null, "Less"),
-        e("div", { className: "w-2.5 h-2.5 rounded-[2px] bg-zinc-800" }),
-        e("div", { className: "w-2.5 h-2.5 rounded-[2px] bg-emerald-950" }),
-        e("div", { className: "w-2.5 h-2.5 rounded-[2px] bg-emerald-700" }),
-        e("div", { className: "w-2.5 h-2.5 rounded-[2px] bg-emerald-400" }),
+        e("div", { className: "w-2.5 h-2.5 rounded-[2px]", style: getCellStyles(0) }),
+        e("div", { className: "w-2.5 h-2.5 rounded-[2px]", style: getCellStyles(1) }),
+        e("div", { className: "w-2.5 h-2.5 rounded-[2px]", style: getCellStyles(2) }),
+        e("div", { className: "w-2.5 h-2.5 rounded-[2px]", style: getCellStyles(3) }),
         e("span", null, "More")
       )
     ),
@@ -123,8 +167,6 @@ export default function DashboardTab({
         ? e("div", { className: "text-center py-8 text-zinc-600 text-xs" }, "No tasks scheduled for today.")
         : todayTasks.map((task) => {
             const isCompleted = (completions[todayKey] || []).includes(task.id);
-            const subDoneCount = (task.subtasks || []).filter((s) => (subtaskCompletions[todayKey] || []).includes(s.id)).length;
-            const totalSub = (task.subtasks || []).length;
 
             return e(
               "div",
@@ -136,11 +178,9 @@ export default function DashboardTab({
                 "div",
                 {
                   onClick: () => onOpenTask(task.id),
-                  className: "flex-1 cursor-pointer pr-3",
+                  className: "flex-1 cursor-pointer pr-3 overflow-hidden",
                 },
-                e("p", { className: "text-sm font-medium text-zinc-200" + (isCompleted ? " line-through text-zinc-500" : "") }, task.title),
-                totalSub > 0 &&
-                  e("p", { className: "text-[11px] text-zinc-500 mt-0.5" }, subDoneCount + "/" + totalSub + " subtasks done")
+                e("p", { className: "text-sm font-medium text-zinc-200" + (isCompleted ? " line-through text-zinc-500" : "") }, task.title)
               ),
               e(
                 "button",

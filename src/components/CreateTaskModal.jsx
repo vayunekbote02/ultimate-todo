@@ -3,13 +3,13 @@ import React, { useState, useRef } from "react";
 const e = React.createElement;
 
 const DAYS_OF_WEEK = [
-  { label: "S", value: 0 },
-  { label: "M", value: 1 },
-  { label: "T", value: 2 },
-  { label: "W", value: 3 },
-  { label: "T", value: 4 },
-  { label: "F", value: 5 },
-  { label: "S", value: 6 },
+  { label: "Sun", value: 0 },
+  { label: "Mon", value: 1 },
+  { label: "Tue", value: 2 },
+  { label: "Wed", value: 3 },
+  { label: "Thu", value: 4 },
+  { label: "Fri", value: 5 },
+  { label: "Sat", value: 6 },
 ];
 
 export default function CreateTaskModal({ onClose, onCreate }) {
@@ -153,7 +153,7 @@ export default function CreateTaskModal({ onClose, onCreate }) {
                         active ? prev.filter((val) => val !== d.value) : [...prev, d.value]
                       );
                     },
-                    className: "w-9 h-9 rounded-lg text-xs font-semibold flex items-center justify-center border transition-all " + dayBtnClass,
+                    className: "flex-1 py-1.5 px-1 text-[11px] rounded-lg font-semibold flex items-center justify-center border transition-all " + dayBtnClass,
                   },
                   d.label
                 );
