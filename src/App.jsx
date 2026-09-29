@@ -100,9 +100,12 @@ export default function App() {
     return tasks.filter((t) => !t.parentId);
   }, [tasks]);
 
+  // Read custom display_name first, then Google metadata full_name / name, and fall back to email username
   const displayName =
     session?.user?.user_metadata?.display_name ||
     session?.user?.user_metadata?.full_name ||
+    session?.user?.user_metadata?.name ||
+    session?.user?.email?.split("@")[0] ||
     "";
 
   const handleUpdateName = async (newName) => {
